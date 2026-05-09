@@ -1,0 +1,44 @@
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-lb
+    platform: linux/amd64
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api1
+      - api2
+    deploy:
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: 30M
+    restart: unless-stopped
+    networks:
+      - backend
+
+  api1: &api-template
+    build:
+      context: .
+      dockerfile: Rinha-Backend-Dotnet/Dockerfile
+    container_name: dotnet-api-1
+    platform: linux/amd64
+    deploy:
+      resources:
+        limits:
+          cpus: "0.4" 
+          memory: 160M
+    restart: unless-stopped
+    networks:
+      - backend
+
+  api2:
+    <<: *api-template
+    container_name: dotnet-api-2
+    environment:
+
+networks:
+  backend:
+    driver: bridge
