@@ -1,5 +1,7 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.HttpResults;
+using SuperDotnet.Services;
+
 if (!File.Exists("data/vectors.bin") || !File.Exists("data/labels.bin"))
     throw new Exception("One or more required files are missing");
 var vectorFileSize = new FileInfo("data/vectors.bin").Length;
@@ -13,6 +15,7 @@ Console.WriteLine($"Total items in vectors.bin: {count}");
 
 var builder = WebApplication.CreateSlimBuilder(args);
 
+builder.Services.AddSingleton<DatasetReader>();
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Default);
@@ -31,31 +34,18 @@ if (app.Environment.IsDevelopment())
 
 app.MapGet("/ready", () => Results.Ok("API is ready!"));
 app.MapPost("/fraud-score", () => Results.Ok(new { Score = new Random().Next(0, 100) }));
-app.MapGet("/random-vector", () =>
+app.MapGet("/random-vector", (DatasetReader datasetReader) =>
 {
-    const int dimensions = 14;
-    const int vectorSizeBytes = 28;
-    const int totalVectors = 3_000_000;
 
-    var random = Random.Shared.Next(totalVectors);
 
-    using var stream = File.OpenRead("data/vectors.bin");
-    using var reader = new BinaryReader(stream);
-    using var labelStream = File.OpenRead("data/labels.bin");
-    stream.Seek(random * vectorSizeBytes, SeekOrigin.Begin);
-    labelStream.Seek(random, SeekOrigin.Begin);
-    var values = new float[dimensions];
+    var random = Random.Shared.Next(datasetReader.TotalVectors);
 
-    for (int i = 0; i < dimensions; i++)
-    {
-        short bits = reader.ReadInt16();
-        values[i] = (float)BitConverter.Int16BitsToHalf(bits);
-    }
-    byte labelByte = (byte)labelStream.ReadByte();
-    var label = labelByte == 1 ? "fraud" : "legit";
+    var values = datasetReader.ReadVector(random);
+    var label = datasetReader.ReadLabel(random);
+    var labelString = label == 1 ? "fraud" : "legit";
     return Results.Ok(new RandomVectorReponse
     {
-        Label = label,
+        Label = labelString,
         Index = random,
         Values = values
     });

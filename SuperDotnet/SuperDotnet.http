@@ -1,11 +1,11 @@
 @SuperDotnet_HostAddress = http://localhost:9999
 
-GET {{SuperDotnet_HostAddress}}/todos/
+GET {{SuperDotnet_HostAddress}}/fraud-score
 Accept: application/json
 
 ###
 
-GET {{SuperDotnet_HostAddress}}/todos/1
+GET {{SuperDotnet_HostAddress}}/ready
 Accept: application/json
 
 ###
