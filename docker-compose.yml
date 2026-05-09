@@ -22,7 +22,7 @@ services:
   api1: &api-template
     build:
       context: .
-      dockerfile: Rinha-Backend-Dotnet/Dockerfile
+      dockerfile: SuperDotnet/Dockerfile
     container_name: dotnet-api-1
     platform: linux/amd64
     deploy:

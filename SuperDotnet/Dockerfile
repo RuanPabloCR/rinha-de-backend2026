@@ -28,7 +28,13 @@ RUN dotnet build "./SuperDotnet.csproj" -c $BUILD_CONFIGURATION -o /app/build
 # Esta fase é usada para publicar o projeto de serviço a ser copiado para a fase final
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./SuperDotnet.csproj" -c $BUILD_CONFIGURATION -o /app/publish
+RUN dotnet publish "./SuperDotnet.csproj" \
+    -c $BUILD_CONFIGURATION \
+    -o /app/publish \
+    -r linux-amd64 \
+    --self-contained true \
+    /p:PublishAot=true \
+    /p:UseAppHost=true
 
 # Esta fase é usada como base para a fase final ao iniciar no VS para dar suporte à depuração no modo normal (Padrão ao não usar a configuração de Depuração)
 FROM base AS aotdebug
@@ -42,8 +48,8 @@ RUN apt-get update \
 USER app
 
 # Esta fase é usada na produção ou quando executada no VS no modo normal (padrão quando não está usando a configuração de Depuração)
-FROM ${FINAL_BASE_IMAGE:-mcr.microsoft.com/dotnet/aspnet:10.0} AS final
+FROM ${FINAL_BASE_IMAGE:-mcr.microsoft.com/dotnet/runtime-deps:10.0} AS final
 WORKDIR /app
 EXPOSE 9999
 COPY --from=publish /app/publish .
-ENTRYPOINT ["dotnet","SuperDotnet.dll"]
+ENTRYPOINT ["./SuperDotnet"]
