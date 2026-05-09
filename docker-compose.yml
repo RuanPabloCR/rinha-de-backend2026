@@ -22,7 +22,7 @@ services:
   api1: &api-template
     build:
       context: .
-      dockerfile: SuperDotnet/Dockerfile
+      dockerfile: Dockerfile
     container_name: dotnet-api-1
     platform: linux/amd64
     deploy:
@@ -37,7 +37,6 @@ services:
   api2:
     <<: *api-template
     container_name: dotnet-api-2
-    environment:
 
 networks:
   backend:

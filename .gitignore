@@ -3,3 +3,4 @@ rinhaResources/
 *.log
 *.tmp
 obj/
+bin/

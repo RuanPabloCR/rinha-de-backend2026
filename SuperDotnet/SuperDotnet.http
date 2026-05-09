@@ -1,4 +1,4 @@
-@SuperDotnet_HostAddress = http://localhost:5047
+@SuperDotnet_HostAddress = http://localhost:9999
 
 GET {{SuperDotnet_HostAddress}}/todos/
 Accept: application/json
@@ -9,3 +9,4 @@ GET {{SuperDotnet_HostAddress}}/todos/1
 Accept: application/json
 
 ###
+GET {{SuperDotnet_HostAddress}}/random-vector

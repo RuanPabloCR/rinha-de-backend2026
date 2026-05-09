@@ -6,7 +6,7 @@ ARG FINAL_BASE_IMAGE=${LAUNCHING_FROM_VS:+aotdebug}
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 USER app
 WORKDIR /app
-EXPOSE 9999
+EXPOSE 8080
 
 
 # Esta fase é usada para compilar o projeto de serviço
@@ -19,16 +19,18 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
-COPY ["SuperDotnet.csproj", "./"]
-RUN dotnet restore "./SuperDotnet.csproj"
+COPY ["SuperDotnet/SuperDotnet.csproj", "SuperDotnet/"]
+RUN dotnet restore "SuperDotnet/SuperDotnet.csproj"
 COPY . .
 WORKDIR "/src"
-RUN dotnet build "./SuperDotnet.csproj" -c $BUILD_CONFIGURATION -o /app/build
+RUN mkdir -p /src/data \
+    && cp /src/rinhaResources/rinha-de-backend-2026/resources/references.json.gz /src/data/references.json.gz
+RUN dotnet run --project "Tools/DataPProcessor/DataPProcessor.csproj" -c $BUILD_CONFIGURATION
 
 # Esta fase é usada para publicar o projeto de serviço a ser copiado para a fase final
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./SuperDotnet.csproj" \
+RUN dotnet publish "SuperDotnet/SuperDotnet.csproj" \
     -c $BUILD_CONFIGURATION \
     -o /app/publish \
     -r linux-amd64 \
@@ -50,6 +52,7 @@ USER app
 # Esta fase é usada na produção ou quando executada no VS no modo normal (padrão quando não está usando a configuração de Depuração)
 FROM ${FINAL_BASE_IMAGE:-mcr.microsoft.com/dotnet/runtime-deps:10.0} AS final
 WORKDIR /app
-EXPOSE 9999
+EXPOSE 8080
 COPY --from=publish /app/publish .
+COPY --from=build /src/data ./data
 ENTRYPOINT ["./SuperDotnet"]
