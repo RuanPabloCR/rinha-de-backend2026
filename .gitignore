@@ -1,0 +1,5 @@
+rinhaResources/
+
+*.log
+*.tmp
+obj/
