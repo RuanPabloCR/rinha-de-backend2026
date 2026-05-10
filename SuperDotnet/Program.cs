@@ -1,5 +1,7 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.HttpResults;
+using SuperDotnet.Models;
 using SuperDotnet.Services;
 
 if (!File.Exists("data/vectors.bin") || !File.Exists("data/labels.bin"))
@@ -13,9 +15,14 @@ if (labelFileSize != count)
 
 Console.WriteLine($"Total items in vectors.bin: {count}");
 
+var mcc_risk_json = File.ReadAllText("data/mcc_risk.json");
+var normalization_json = File.ReadAllText("data/normalization.json");
+
 var builder = WebApplication.CreateSlimBuilder(args);
 
 builder.Services.AddSingleton<DatasetReader>();
+builder.Services.AddSingleton<MccRisk>(new MccRisk(JsonSerializer.Deserialize(mcc_risk_json, AppJsonSerializerContext.Default.DictionaryStringSingle)!));
+builder.Services.AddSingleton<Normalization>(JsonSerializer.Deserialize(normalization_json, AppJsonSerializerContext.Default.Normalization)!);
 builder.Services.AddScoped<SearchService>();
 
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -23,7 +30,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Default);
 });
 
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
@@ -68,6 +75,8 @@ app.Run();
 [JsonSerializable(typeof(RandomVectorReponse))]
 [JsonSerializable(typeof(SearchResult))]
 [JsonSerializable(typeof(Neighbor))]
+[JsonSerializable(typeof(Dictionary<string, float>))]
+[JsonSerializable(typeof(Normalization))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
 
