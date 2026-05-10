@@ -10,3 +10,5 @@ Accept: application/json
 
 ###
 GET {{SuperDotnet_HostAddress}}/random-vector
+###
+GET {{SuperDotnet_HostAddress}}/search/25

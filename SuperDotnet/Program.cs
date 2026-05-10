@@ -16,6 +16,8 @@ Console.WriteLine($"Total items in vectors.bin: {count}");
 var builder = WebApplication.CreateSlimBuilder(args);
 
 builder.Services.AddSingleton<DatasetReader>();
+builder.Services.AddScoped<SearchService>();
+
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Default);
@@ -50,11 +52,22 @@ app.MapGet("/random-vector", (DatasetReader datasetReader) =>
         Values = values
     });
 });
+app.MapGet("/search/{index:int}", (
+    int index,
+    DatasetReader dataset,
+    SearchService searchService) =>
+{
+    var query = dataset.ReadVector(index);
+    SearchResult? result = searchService.Search(query);
 
+    return Results.Ok(result);
+});
 app.Run();
 
 
 [JsonSerializable(typeof(RandomVectorReponse))]
+[JsonSerializable(typeof(SearchResult))]
+[JsonSerializable(typeof(Neighbor))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
 

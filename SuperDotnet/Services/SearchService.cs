@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using SuperDotnet.Services;
 
 public sealed class SearchService
@@ -17,10 +18,18 @@ public sealed class SearchService
 
             float distance = DistanceSquared(query, candidate);
             // Deixar pra adicionar o Label depois, pra otimizar leitura
-            top.TryAdd(i, distance, _datasetReader.ReadLabel(i));
+            top.TryAdd(i, distance);
         }
 
-        return new SearchResult(top.GetResults());
+        var results = top.GetResults();
+
+        for (int i = 0; i < results.Length; i++)
+        {
+            var label = _datasetReader.ReadLabel(results[i].Index);
+            results[i] = results[i] with { Label = label };
+        }
+
+        return new SearchResult(results);
     }
     // Squared sem squared kk
     public static float DistanceSquared(float[] a, float[] b)
@@ -39,11 +48,11 @@ public sealed class SearchService
 public sealed record Neighbor(
     int Index,
     float Distance,
-    byte Label
+    byte? Label
 );
 public sealed class TopK
 {
-    private readonly Neighbor[] _items;
+    private Neighbor[] _items;
 
     public TopK(int k)
     {
@@ -51,16 +60,16 @@ public sealed class TopK
 
         for (int i = 0; i < k; i++)
         {
-            _items[i] = new Neighbor(-1, float.MaxValue, 0);
+            _items[i] = new Neighbor(-1, float.MaxValue, null);
         }
     }
 
-    public void TryAdd(int index, float distance, byte label)
+    public void TryAdd(int index, float distance)
     {
         if (distance >= _items[^1].Distance)
             return;
 
-        _items[^1] = new Neighbor(index, distance, label);
+        _items[^1] = new Neighbor(index, distance, null);
         // Otimizar Ordenação depois
         Array.Sort(_items, (a, b) => a.Distance.CompareTo(b.Distance));
     }
