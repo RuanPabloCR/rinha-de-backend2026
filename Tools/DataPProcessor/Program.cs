@@ -8,6 +8,7 @@ Console.WriteLine("Starting");
 const string inputPath = "data/references.json.gz";
 const string vectorsOutput = "data/vectors.bin";
 const string labelsOutput = "data/labels.bin";
+int[] specDimensionOrder = [5, 6, 2, 7, 8, 9, 10, 11, 12, 0, 1, 3, 4, 13];
 
 Directory.CreateDirectory("data");
 
@@ -38,9 +39,9 @@ await foreach (var item in JsonSerializer.DeserializeAsyncEnumerable<Vector>(
         throw new InvalidOperationException(
             $"Expected 14 dimensions, got {item.Values.Length}");
 
-    foreach (var value in item.Values)
+    foreach (var dimension in specDimensionOrder)
     {
-        WriteHalf(vectorWriter, (Half)value);
+        WriteHalf(vectorWriter, (Half)item.Values[dimension]);
     }
 
     labelWriter.Write(item.Label == "fraud" ? (byte)1 : (byte)0);

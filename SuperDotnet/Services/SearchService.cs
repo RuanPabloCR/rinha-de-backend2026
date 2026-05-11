@@ -1,80 +1,80 @@
-using System.Text.Json.Serialization;
-using SuperDotnet.Services;
+namespace SuperDotnet.Services;
 
-public sealed class SearchService
+public unsafe sealed class SearchService
 {
+    private const int K = 5;
     private readonly DatasetReader _datasetReader;
+
     public SearchService(DatasetReader datasetReader)
     {
         _datasetReader = datasetReader;
     }
-    public SearchResult Search(float[] query)
-    {
-        var top = new TopK(5);
 
+    public float SearchFraudScore(ReadOnlySpan<float> query)
+    {
+        if (query.Length != DatasetReader.Dimensions)
+            throw new ArgumentException("Vector size mismatch.", nameof(query));
+
+        Span<int> topIndexes = stackalloc int[K];
+        Span<float> topDistances = stackalloc float[K];
+
+        for (int i = 0; i < K; i++)
+        {
+            topIndexes[i] = -1;
+            topDistances[i] = float.MaxValue;
+        }
+
+        byte* vectors = _datasetReader.VectorPointer;
         for (int i = 0; i < _datasetReader.TotalVectors; i++)
         {
-            var candidate = _datasetReader.ReadVector(i);
+            byte* vectorStart = vectors + ((long)i * DatasetReader.VectorSizeBytes);
+            float distance = DistanceSquaredEarlyAbort(query, vectorStart, topDistances[^1]);
 
-            float distance = DistanceSquared(query, candidate);
-            // Deixar pra adicionar o Label depois, pra otimizar leitura
-            top.TryAdd(i, distance);
+            if (distance < topDistances[^1])
+                InsertTopK(topIndexes, topDistances, i, distance);
         }
 
-        var results = top.GetResults();
-
-        for (int i = 0; i < results.Length; i++)
+        int fraudCount = 0;
+        byte* labels = _datasetReader.LabelPointer;
+        for (int i = 0; i < K; i++)
         {
-            var label = _datasetReader.ReadLabel(results[i].Index);
-            results[i] = results[i] with { Label = label };
+            int index = topIndexes[i];
+            if (index >= 0)
+                fraudCount += labels[index];
         }
 
-        return new SearchResult(results);
+        return fraudCount / (float)K;
     }
-    // Squared sem squared kk
-    public static float DistanceSquared(float[] a, float[] b)
+
+    private static float DistanceSquaredEarlyAbort(ReadOnlySpan<float> query, byte* candidate, float cutoff)
     {
         float sum = 0;
-        for (int i = 0; i < a.Length; i++)
+
+        for (int i = 0; i < DatasetReader.Dimensions; i++)
         {
-            float diff = b[i] - a[i];
+            short bits = *(short*)(candidate + (i * 2));
+            float value = (float)BitConverter.Int16BitsToHalf(bits);
+            float diff = value - query[i];
             sum += diff * diff;
+
+            if (sum >= cutoff)
+                return sum;
         }
+
         return sum;
     }
 
-}
-
-public sealed record Neighbor(
-    int Index,
-    float Distance,
-    byte? Label
-);
-public sealed class TopK
-{
-    private Neighbor[] _items;
-
-    public TopK(int k)
+    private static void InsertTopK(Span<int> indexes, Span<float> distances, int index, float distance)
     {
-        _items = new Neighbor[k];
-
-        for (int i = 0; i < k; i++)
+        int position = K - 1;
+        while (position > 0 && distance < distances[position - 1])
         {
-            _items[i] = new Neighbor(-1, float.MaxValue, null);
+            distances[position] = distances[position - 1];
+            indexes[position] = indexes[position - 1];
+            position--;
         }
+
+        distances[position] = distance;
+        indexes[position] = index;
     }
-
-    public void TryAdd(int index, float distance)
-    {
-        if (distance >= _items[^1].Distance)
-            return;
-
-        _items[^1] = new Neighbor(index, distance, null);
-        // Otimizar Ordenação depois
-        Array.Sort(_items, (a, b) => a.Distance.CompareTo(b.Distance));
-    }
-
-    public Neighbor[] GetResults() => _items;
 }
-
-public sealed record SearchResult(Neighbor[] Neighbors);

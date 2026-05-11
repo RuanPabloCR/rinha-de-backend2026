@@ -24,7 +24,9 @@ RUN dotnet restore "SuperDotnet/SuperDotnet.csproj"
 COPY . .
 WORKDIR "/src"
 RUN mkdir -p /src/data \
-    && cp /src/rinhaResources/rinha-de-backend-2026/resources/references.json.gz /src/data/references.json.gz
+    && cp /src/rinhaResources/rinha-de-backend-2026/resources/references.json.gz /src/data/references.json.gz \
+    && cp /src/rinhaResources/rinha-de-backend-2026/resources/mcc_risk.json /src/data/mcc_risk.json \
+    && cp /src/rinhaResources/rinha-de-backend-2026/resources/normalization.json /src/data/normalization.json
 RUN dotnet run --project "Tools/DataPProcessor/DataPProcessor.csproj" -c $BUILD_CONFIGURATION
 
 # Esta fase é usada para publicar o projeto de serviço a ser copiado para a fase final

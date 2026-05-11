@@ -1,73 +1,106 @@
 using System.IO;
+using System.IO.MemoryMappedFiles;
 
 namespace SuperDotnet.Services;
 
-public sealed class DatasetReader : IDisposable
+public unsafe sealed class DatasetReader : IDisposable
 {
-    private const int Dimensions = 14;
+    public const int Dimensions = VectorLayout.Dimensions;
     private const int BytesPerValue = 2;
-    private const int VectorSizeBytes = Dimensions * BytesPerValue; //28!
+    public const int VectorSizeBytes = Dimensions * BytesPerValue;
+    private readonly MemoryMappedFile _vectorMmf;
+    private readonly MemoryMappedViewAccessor _vectorAccessor;
+    private byte* _vectorPtr;
 
-    private readonly FileStream _vectorStream;
-    private readonly BinaryReader _vectorReader;
-
-    private readonly FileStream _labelStream;
-    private readonly BinaryReader _labelReader;
+    private readonly MemoryMappedFile _labelMmf;
+    private readonly MemoryMappedViewAccessor _labelAccessor;
+    private byte* _labelPtr;
 
     public int TotalVectors { get; }
+    public byte* VectorPointer => _vectorPtr;
+    public byte* LabelPointer => _labelPtr;
+
 
     public DatasetReader(
         string vectorPath = "data/vectors.bin",
         string labelPath = "data/labels.bin")
     {
-        _vectorStream = File.OpenRead(vectorPath);
-        _vectorReader = new BinaryReader(_vectorStream);
+        var vectorSize = new FileInfo(vectorPath).Length;
 
-        _labelStream = File.OpenRead(labelPath);
-        _labelReader = new BinaryReader(_labelStream);
+        TotalVectors = (int)(vectorSize / VectorSizeBytes);
 
-        var vectorFileSize = new FileInfo(vectorPath).Length;
-        TotalVectors = (int)(vectorFileSize / VectorSizeBytes);
+        _vectorMmf = MemoryMappedFile.CreateFromFile(
+            vectorPath,
+            FileMode.Open,
+            null,
+            0,
+            MemoryMappedFileAccess.Read);
+
+        _vectorAccessor = _vectorMmf.CreateViewAccessor(
+            0,
+            0,
+            MemoryMappedFileAccess.Read);
+
+        byte* vectorPtr = null;
+        _vectorAccessor.SafeMemoryMappedViewHandle.AcquirePointer(ref vectorPtr);
+        _vectorPtr = vectorPtr;
+
+        _labelMmf = MemoryMappedFile.CreateFromFile(
+            labelPath,
+            FileMode.Open,
+            null,
+            0,
+            MemoryMappedFileAccess.Read);
+
+        _labelAccessor = _labelMmf.CreateViewAccessor(
+            0,
+            0,
+            MemoryMappedFileAccess.Read);
+
+        byte* labelPtr = null;
+        _labelAccessor.SafeMemoryMappedViewHandle.AcquirePointer(ref labelPtr);
+        _labelPtr = labelPtr;
     }
 
-    public float[] ReadVector(int index)
+    public void ReadVector(int index, Span<float> destination)
     {
         ValidateIndex(index);
 
-        long offset = (long)index * VectorSizeBytes;
-        _vectorStream.Seek(offset, SeekOrigin.Begin);
+        if (destination.Length < Dimensions)
+            throw new ArgumentException(
+                $"Destination span must be at least {Dimensions} elements.",
+                nameof(destination));
 
-        var values = new float[Dimensions];
+        byte* vectorStart = _vectorPtr + ((long)index * VectorSizeBytes);
 
         for (int i = 0; i < Dimensions; i++)
         {
-            short bits = _vectorReader.ReadInt16();
-            values[i] = (float)BitConverter.Int16BitsToHalf(bits);
+            short bits = *(short*)(vectorStart + (i * BytesPerValue));
+            destination[i] = (float)BitConverter.Int16BitsToHalf(bits);
         }
-
-        return values;
     }
 
     public byte ReadLabel(int index)
     {
         ValidateIndex(index);
 
-        _labelStream.Seek(index, SeekOrigin.Begin);
-        return _labelReader.ReadByte();
+        return *(_labelPtr + index);
     }
 
     private void ValidateIndex(int index)
     {
-        if (index < 0 || index >= TotalVectors)
+        if ((uint)index >= (uint)TotalVectors)
             throw new ArgumentOutOfRangeException(nameof(index));
     }
 
     public void Dispose()
     {
-        _vectorReader.Dispose();
-        _vectorStream.Dispose();
+        _vectorAccessor.SafeMemoryMappedViewHandle.ReleasePointer();
+        _vectorAccessor.Dispose();
+        _vectorMmf.Dispose();
 
-        _labelReader.Dispose();
-        _labelStream.Dispose();
+        _labelAccessor.SafeMemoryMappedViewHandle.ReleasePointer();
+        _labelAccessor.Dispose();
+        _labelMmf.Dispose();
     }
 }
