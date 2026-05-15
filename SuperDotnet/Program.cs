@@ -1,9 +1,10 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using SuperDotnet.Models;
 using SuperDotnet.Services;
 
-if (!File.Exists("data/vectors.bin") || !File.Exists("data/labels.bin"))
+if (!File.Exists("data/vectors.bin") || !File.Exists("data/labels.bin") || !File.Exists("data/buckets.bin"))
     throw new Exception("One or more required files are missing");
 var vectorFileSize = new FileInfo("data/vectors.bin").Length;
 long count = vectorFileSize / DatasetReader.VectorSizeBytes;
@@ -12,7 +13,12 @@ if (labelFileSize != count)
     throw new Exception(
         $"Vectors and labels file size mismatch. Expected {count} labels, got {labelFileSize}");
 
-Console.WriteLine($"Total items in vectors.bin: {count}");
+var bucketFileSize = new FileInfo("data/buckets.bin").Length;
+var expectedBucketFileSize = BucketTable.TotalBuckets * BucketTable.RecordSizeBytes;
+if (bucketFileSize != expectedBucketFileSize)
+    throw new Exception(
+        $"Invalid buckets file size. Expected {expectedBucketFileSize}, got {bucketFileSize}");
+
 
 var mcc_risk_json = File.ReadAllText("data/mcc_risk.json");
 var normalization_json = File.ReadAllText("data/normalization.json");
@@ -32,16 +38,21 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var app = builder.Build();
 
+var dataset = app.Services.GetRequiredService<DatasetReader>();
+var sw = Stopwatch.StartNew();
+dataset.Warmup();
+sw.Stop();
+Console.WriteLine($"Dataset MMF warmup completed in {sw.ElapsedMilliseconds}ms");
+
 app.MapGet("/ready", () => Results.Ok("API is ready!"));
 app.MapPost("/fraud-score", (
     FraudScoreRequest request,
     TransactionVectorizer vectorizer,
     SearchService searchService) =>
 {
-    Span<float> query = stackalloc float[DatasetReader.Dimensions];
-    vectorizer.Vectorize(request, query);
-    float fraudScore = searchService.SearchFraudScore(query);
-    Console.WriteLine($"Calculated fraud score: {fraudScore}");
+    Span<short> query = stackalloc short[DatasetReader.Dimensions];
+    vectorizer.VectorizeQuantized(request, query, out int baseBucket, out int riskIndex);
+    float fraudScore = searchService.SearchFraudScore(query, baseBucket, riskIndex);
     return Results.Ok(new FraudScoreResponse
     {
         Approved = fraudScore < 0.6f,

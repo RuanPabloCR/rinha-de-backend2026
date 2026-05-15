@@ -1,6 +1,9 @@
 rinhaResources/
+data/
 
 *.log
 *.tmp
 obj/
 bin/
+ExploratoryAnalysis/
+SearchMicrotests/

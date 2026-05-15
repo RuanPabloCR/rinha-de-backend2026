@@ -15,6 +15,10 @@ public unsafe sealed class DatasetReader : IDisposable
     private readonly MemoryMappedFile _labelMmf;
     private readonly MemoryMappedViewAccessor _labelAccessor;
     private byte* _labelPtr;
+    private readonly int[] _bucketOffsets;
+    private readonly int[] _bucketCounts;
+
+    private volatile byte _warmupSink;
 
     public int TotalVectors { get; }
     public byte* VectorPointer => _vectorPtr;
@@ -23,7 +27,8 @@ public unsafe sealed class DatasetReader : IDisposable
 
     public DatasetReader(
         string vectorPath = "data/vectors.bin",
-        string labelPath = "data/labels.bin")
+        string labelPath = "data/labels.bin",
+        string bucketsPath = "data/buckets.bin")
     {
         var vectorSize = new FileInfo(vectorPath).Length;
 
@@ -60,6 +65,25 @@ public unsafe sealed class DatasetReader : IDisposable
         byte* labelPtr = null;
         _labelAccessor.SafeMemoryMappedViewHandle.AcquirePointer(ref labelPtr);
         _labelPtr = labelPtr;
+
+        (_bucketOffsets, _bucketCounts) = LoadBuckets(bucketsPath, TotalVectors);
+    }
+
+    public void Warmup()
+    {
+        int pageSize = Environment.SystemPageSize;
+        long totalVectorBytes = (long)TotalVectors * VectorSizeBytes;
+
+        byte sink = 0;
+
+        for (long offset = 0; offset < totalVectorBytes; offset += pageSize)
+            sink ^= *(_vectorPtr + offset);
+
+        for (long offset = 0; offset < TotalVectors; offset += pageSize)
+            sink ^= *(_labelPtr + offset);
+
+        _warmupSink = sink;
+        GC.KeepAlive(_warmupSink);
     }
 
     public void ReadVector(int index, Span<float> destination)
@@ -76,7 +100,7 @@ public unsafe sealed class DatasetReader : IDisposable
         for (int i = 0; i < Dimensions; i++)
         {
             short bits = *(short*)(vectorStart + (i * BytesPerValue));
-            destination[i] = (float)BitConverter.Int16BitsToHalf(bits);
+            destination[i] = bits / 32767f;
         }
     }
 
@@ -91,6 +115,62 @@ public unsafe sealed class DatasetReader : IDisposable
     {
         if ((uint)index >= (uint)TotalVectors)
             throw new ArgumentOutOfRangeException(nameof(index));
+    }
+
+    public int GetBucketOffset(int baseBucket, int riskIndex)
+    {
+        int bucket = BucketTable.ToBucketId(baseBucket, riskIndex);
+        return _bucketOffsets[bucket];
+    }
+
+    public int GetBucketCount(int baseBucket, int riskIndex)
+    {
+        int bucket = BucketTable.ToBucketId(baseBucket, riskIndex);
+        return _bucketCounts[bucket];
+    }
+
+    private static (int[] Offsets, int[] Counts) LoadBuckets(string bucketsPath, int totalVectors)
+    {
+        var fileSize = new FileInfo(bucketsPath).Length;
+        var expectedSize = BucketTable.TotalBuckets * BucketTable.RecordSizeBytes;
+        if (fileSize != expectedSize)
+            throw new InvalidOperationException(
+                $"Invalid buckets file size. Expected {expectedSize}, got {fileSize}.");
+
+        var offsets = new int[BucketTable.TotalBuckets];
+        var counts = new int[BucketTable.TotalBuckets];
+
+        using var stream = File.OpenRead(bucketsPath);
+        using var reader = new BinaryReader(stream);
+
+        int expectedOffset = 0;
+        for (int baseBucket = 0; baseBucket < BucketTable.BaseBucketCount; baseBucket++)
+        {
+            for (int riskIndex = 0; riskIndex < BucketTable.RiskCount; riskIndex++)
+            {
+                int bucket = BucketTable.ToBucketId(baseBucket, riskIndex);
+                int storedBaseBucket = reader.ReadInt32();
+                int storedRiskIndex = reader.ReadInt32();
+                int offset = reader.ReadInt32();
+                int count = reader.ReadInt32();
+
+                if (storedBaseBucket != baseBucket || storedRiskIndex != riskIndex)
+                    throw new InvalidOperationException("Invalid bucket ordering in buckets.bin.");
+
+                if (offset != expectedOffset || count < 0)
+                    throw new InvalidOperationException("Invalid bucket range in buckets.bin.");
+
+                offsets[bucket] = offset;
+                counts[bucket] = count;
+                expectedOffset += count;
+            }
+        }
+
+        if (expectedOffset != totalVectors)
+            throw new InvalidOperationException(
+                $"Bucket counts mismatch. Expected {totalVectors}, got {expectedOffset}.");
+
+        return (offsets, counts);
     }
 
     public void Dispose()

@@ -19,6 +19,39 @@ public sealed class TransactionVectorizer
             throw new ArgumentException("Destination vector is too small.", nameof(destination));
 
         Span<float> spec = stackalloc float[VectorLayout.Dimensions];
+        FillSpec(request, spec);
+
+        var order = VectorLayout.SpecDimensionOrder;
+        for (int i = 0; i < VectorLayout.Dimensions; i++)
+            destination[i] = spec[order[i]];
+    }
+
+    public void VectorizeQuantized(
+        FraudScoreRequest request,
+        Span<short> destination,
+        out int baseBucket,
+        out int riskIndex)
+    {
+        if (destination.Length < VectorLayout.Dimensions)
+            throw new ArgumentException("Destination vector is too small.", nameof(destination));
+
+        Span<float> spec = stackalloc float[VectorLayout.Dimensions];
+        FillSpec(request, spec);
+
+        baseBucket = BucketTable.GetBaseBucket(
+            request.LastTransaction is not null,
+            request.Terminal.IsOnline,
+            request.Terminal.CardPresent,
+            spec[11] >= 0.5f);
+        riskIndex = BucketTable.GetRiskIndex(spec[12]);
+
+        var order = VectorLayout.SpecDimensionOrder;
+        for (int i = 0; i < VectorLayout.Dimensions; i++)
+            destination[i] = BucketTable.QuantizeQ15(spec[order[i]]);
+    }
+
+    private void FillSpec(FraudScoreRequest request, Span<float> spec)
+    {
         var requestedAt = request.Transaction.RequestedAt.ToUniversalTime();
 
         spec[0] = Clamp01(request.Transaction.Amount / _normalization.max_amount);
@@ -46,10 +79,6 @@ public sealed class TransactionVectorizer
         spec[11] = IsKnownMerchant(request.Customer.KnownMerchants, request.Merchant.Id) ? 0f : 1f;
         spec[12] = _mccRisk.Verify(request.Merchant.Mcc);
         spec[13] = Clamp01(request.Merchant.AvgAmount / _normalization.max_merchant_avg_amount);
-
-        var order = VectorLayout.SpecDimensionOrder;
-        for (int i = 0; i < VectorLayout.Dimensions; i++)
-            destination[i] = spec[order[i]];
     }
 
     private static bool IsKnownMerchant(string[] knownMerchants, string merchantId)
