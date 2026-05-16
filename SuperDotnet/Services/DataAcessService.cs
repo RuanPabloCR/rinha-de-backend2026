@@ -1,4 +1,3 @@
-using System.IO;
 using System.IO.MemoryMappedFiles;
 
 namespace SuperDotnet.Services;
@@ -23,7 +22,6 @@ public unsafe sealed class DatasetReader : IDisposable
     public int TotalVectors { get; }
     public byte* VectorPointer => _vectorPtr;
     public byte* LabelPointer => _labelPtr;
-
 
     public DatasetReader(
         string vectorPath = "data/vectors.bin",
@@ -88,7 +86,8 @@ public unsafe sealed class DatasetReader : IDisposable
 
     public void ReadVector(int index, Span<float> destination)
     {
-        ValidateIndex(index);
+        if ((uint)index >= (uint)TotalVectors)
+            throw new ArgumentOutOfRangeException(nameof(index));
 
         if (destination.Length < Dimensions)
             throw new ArgumentException(
@@ -106,15 +105,10 @@ public unsafe sealed class DatasetReader : IDisposable
 
     public byte ReadLabel(int index)
     {
-        ValidateIndex(index);
-
-        return *(_labelPtr + index);
-    }
-
-    private void ValidateIndex(int index)
-    {
         if ((uint)index >= (uint)TotalVectors)
             throw new ArgumentOutOfRangeException(nameof(index));
+
+        return *(_labelPtr + index);
     }
 
     public int GetBucketOffset(int baseBucket, int riskIndex)
@@ -127,6 +121,25 @@ public unsafe sealed class DatasetReader : IDisposable
     {
         int bucket = BucketTable.ToBucketId(baseBucket, riskIndex);
         return _bucketCounts[bucket];
+    }
+
+    public (int Offset, int Count) GetBucketRange(int baseBucket, int riskIndex)
+    {
+        int id = BucketTable.ToBucketId(baseBucket, riskIndex);
+        return (_bucketOffsets[id], _bucketCounts[id]);
+    }
+
+    public int EstimateChunkStart(int baseBucket, int riskIndex, float amountVsAvg)
+    {
+        var (offset, count) = GetBucketRange(baseBucket, riskIndex);
+        if (count <= BucketTable.ChunkSize)
+            return offset;
+
+        float clamped = float.IsNaN(amountVsAvg) || amountVsAvg <= 0f ? 0f :
+                        amountVsAvg >= 1f ? 1f : amountVsAvg;
+        int position = (int)(clamped * (count - 1));
+        int chunkIndex = position / BucketTable.ChunkSize;
+        return offset + chunkIndex * BucketTable.ChunkSize;
     }
 
     private static (int[] Offsets, int[] Counts) LoadBuckets(string bucketsPath, int totalVectors)

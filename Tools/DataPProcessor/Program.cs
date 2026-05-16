@@ -1,5 +1,4 @@
-﻿// See https://aka.ms/new-console-template for more information
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -21,18 +20,9 @@ var options = new JsonSerializerOptions
     PropertyNameCaseInsensitive = true
 };
 
-var vectorBuckets = new MemoryStream[BucketTable.TotalBuckets];
-var labelBuckets = new MemoryStream[BucketTable.TotalBuckets];
-var vectorWriters = new BinaryWriter[BucketTable.TotalBuckets];
-var labelWriters = new BinaryWriter[BucketTable.TotalBuckets];
-
+var bucketItems = new List<(float amountVsAvg, short[] vector, byte label)>[BucketTable.TotalBuckets];
 for (int i = 0; i < BucketTable.TotalBuckets; i++)
-{
-    vectorBuckets[i] = new MemoryStream();
-    labelBuckets[i] = new MemoryStream();
-    vectorWriters[i] = new BinaryWriter(vectorBuckets[i]);
-    labelWriters[i] = new BinaryWriter(labelBuckets[i]);
-}
+    bucketItems[i] = [];
 
 int count = 0;
 
@@ -54,28 +44,36 @@ await foreach (var item in JsonSerializer.DeserializeAsyncEnumerable<Vector>(
         item.Values[11] >= 0.5f,
         item.Values[12]);
 
-    var vectorWriter = vectorWriters[bucket];
-    foreach (var dimension in specDimensionOrder)
-    {
-        vectorWriter.Write(QuantizeQ15(item.Values[dimension]));
-    }
+    short[] vec = new short[14];
+    for (int d = 0; d < 14; d++)
+        vec[d] = QuantizeQ15(item.Values[specDimensionOrder[d]]);
 
-    var labelWriter = labelWriters[bucket];
-    labelWriter.Write(item.Label == "fraud" ? (byte)1 : (byte)0);
+    byte label = item.Label == "fraud" ? (byte)1 : (byte)0;
+    float amountVsAvg = item.Values[2];
+
+    bucketItems[bucket].Add((amountVsAvg, vec, label));
 
     count++;
 
     if (count % 100_000 == 0)
-    {
         Console.WriteLine($"Processed {count:N0} items...");
+}
+
+Console.WriteLine($"Sorting {count:N0} items by amount_vs_avg...");
+var sortSw = System.Diagnostics.Stopwatch.StartNew();
+
+for (int i = 0; i < BucketTable.TotalBuckets; i++)
+{
+    if (bucketItems[i].Count > 0)
+    {
+        var items = bucketItems[i];
+        items.Sort((a, b) => a.amountVsAvg.CompareTo(b.amountVsAvg));
+        bucketItems[i] = items;
     }
 }
 
-foreach (var writer in vectorWriters)
-    writer.Flush();
-
-foreach (var writer in labelWriters)
-    writer.Flush();
+sortSw.Stop();
+Console.WriteLine($"Sort completed in {sortSw.ElapsedMilliseconds}ms");
 
 await using var vectorsStream = File.Create(vectorsOutput);
 await using var labelsStream = File.Create(labelsOutput);
@@ -89,19 +87,21 @@ for (int baseBucket = 0; baseBucket < BucketTable.BaseBucketCount; baseBucket++)
 {
     for (int riskIndex = 0; riskIndex < BucketTable.RiskCount; riskIndex++)
     {
-        int bucket = BucketTable.ToBucketId(baseBucket, riskIndex);
-        int bucketCount = checked((int)labelBuckets[bucket].Length);
+        int bucketId = BucketTable.ToBucketId(baseBucket, riskIndex);
+        var items = bucketItems[bucketId];
+        int bucketCount = items.Count;
 
         bucketWriter.Write(baseBucket);
         bucketWriter.Write(riskIndex);
         bucketWriter.Write(offset);
         bucketWriter.Write(bucketCount);
 
-        vectorBuckets[bucket].Position = 0;
-        labelBuckets[bucket].Position = 0;
-
-        await vectorBuckets[bucket].CopyToAsync(vectorsStream);
-        await labelBuckets[bucket].CopyToAsync(labelsStream);
+        foreach (var (_, vec, label) in items)
+        {
+            foreach (short val in vec)
+                vectorsStream.Write(BitConverter.GetBytes(val));
+            labelsStream.WriteByte(label);
+        }
 
         largestBucket = Math.Max(largestBucket, bucketCount);
         offset += bucketCount;
@@ -134,6 +134,7 @@ static class BucketTable
     public const int BaseBucketCount = 16;
     public const int RiskCount = 10;
     public const int TotalBuckets = BaseBucketCount * RiskCount;
+    public const int ChunkSize = 16384;
 
     private static ReadOnlySpan<float> Risks =>
     [

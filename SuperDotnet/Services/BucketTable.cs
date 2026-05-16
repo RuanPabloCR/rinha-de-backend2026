@@ -6,14 +6,37 @@ public static class BucketTable
     public const int RiskCount = 10;
     public const int TotalBuckets = BaseBucketCount * RiskCount;
     public const int RecordSizeBytes = sizeof(int) * 4;
-    public const int TargetMinCandidates = 300_000;
-    public const int TargetMaxCandidates = 500_000;
+    public const int ChunkSize = 16384;
+    public const int TargetMinCandidates = 150_000;
 
-    public static ReadOnlySpan<float> Risks =>
+    private static readonly float[] RiskValues =
     [
         0.15f, 0.20f, 0.25f, 0.30f, 0.35f,
         0.45f, 0.50f, 0.75f, 0.80f, 0.85f
     ];
+
+    public static readonly int[][] RiskExpansionOrders;
+
+    static BucketTable()
+    {
+        RiskExpansionOrders = new int[RiskCount][];
+        for (int ri = 0; ri < RiskCount; ri++)
+        {
+            var order = new int[RiskCount];
+            for (int i = 0; i < RiskCount; i++)
+                order[i] = i;
+
+            float target = RiskValues[ri];
+            Array.Sort(order, (a, b) =>
+            {
+                float da = MathF.Abs(RiskValues[a] - target);
+                float db = MathF.Abs(RiskValues[b] - target);
+                int cmp = da.CompareTo(db);
+                return cmp != 0 ? cmp : a.CompareTo(b);
+            });
+            RiskExpansionOrders[ri] = order;
+        }
+    }
 
     public static short QuantizeQ15(float value)
     {
@@ -53,11 +76,11 @@ public static class BucketTable
     public static int GetRiskIndex(float value)
     {
         int bestIndex = 0;
-        float bestDistance = MathF.Abs(value - Risks[0]);
+        float bestDistance = MathF.Abs(value - RiskValues[0]);
 
-        for (int i = 1; i < Risks.Length; i++)
+        for (int i = 1; i < RiskValues.Length; i++)
         {
-            float distance = MathF.Abs(value - Risks[i]);
+            float distance = MathF.Abs(value - RiskValues[i]);
             if (distance < bestDistance)
             {
                 bestIndex = i;
@@ -66,38 +89,5 @@ public static class BucketTable
         }
 
         return bestIndex;
-    }
-
-    public static void FillRiskExpansionOrder(int riskIndex, Span<int> destination)
-    {
-        if (destination.Length < RiskCount)
-            throw new ArgumentException("Destination span is too small.", nameof(destination));
-
-        for (int i = 0; i < RiskCount; i++)
-            destination[i] = i;
-
-        float target = Risks[riskIndex];
-        for (int i = 1; i < RiskCount; i++)
-        {
-            int candidate = destination[i];
-            float candidateDistance = MathF.Abs(Risks[candidate] - target);
-            int position = i - 1;
-
-            while (position >= 0)
-            {
-                int current = destination[position];
-                float currentDistance = MathF.Abs(Risks[current] - target);
-                if (currentDistance < candidateDistance)
-                    break;
-
-                if (currentDistance == candidateDistance && current < candidate)
-                    break;
-
-                destination[position + 1] = current;
-                position--;
-            }
-
-            destination[position + 1] = candidate;
-        }
     }
 }

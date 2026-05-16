@@ -30,13 +30,16 @@ public sealed class TransactionVectorizer
         FraudScoreRequest request,
         Span<short> destination,
         out int baseBucket,
-        out int riskIndex)
+        out int riskIndex,
+        out float amountVsAvg)
     {
         if (destination.Length < VectorLayout.Dimensions)
             throw new ArgumentException("Destination vector is too small.", nameof(destination));
 
         Span<float> spec = stackalloc float[VectorLayout.Dimensions];
         FillSpec(request, spec);
+
+        amountVsAvg = spec[2];
 
         baseBucket = BucketTable.GetBaseBucket(
             request.LastTransaction is not null,
