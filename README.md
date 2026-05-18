@@ -30,7 +30,7 @@ references.json.gz (official dataset, 3M vectors)
 
 ### Overview
 
-The search converts each transaction into a 14-dimensional normalized vector, determines its bucket, and performs an **exact k-NN** search (Euclidean distance) within the most promising subset of the dataset. No approximation — the top-5 nearest neighbors are guaranteed correct within the scanned candidates.
+The search converts each transaction into a 14-dimensional normalized vector, determines its bucket, and performs an **exact k-NN** search (Euclidean distance) within the most promising subset of the dataset.
 
 ### Bucketization (160 buckets)
 
@@ -121,69 +121,14 @@ Runs during Docker build. Steps:
 4. Reorder dimensions for early-abort optimization
 5. Sort each bucket by `amount_vs_avg`
 6. Write three binary files:
-   - `vectors.bin` — 3M × 28 bytes = 84 MB
+   - `vectors.bin` — 3M × 28 bytes ~ 84 MB
    - `labels.bin` — 3M × 1 byte = 3 MB
-   - `buckets.bin` — 160 × 16 bytes = 2.5 KB
+   - `buckets.bin` — 160 × 16 bytes ~ 2.5 KB
 
 ### Runtime (`SuperDotnet`)
 
 - **Memory-Mapped Files:** Vectors and labels are accessed via MMF for zero-copy reads
 - **Warmup:** On startup, every cache line (64B stride) of the vector and label regions is touched, and synthetic queries are run for every bucket to pre-fault bucket metadata and warm the branch predictor
-- **GC Control:** Aggressive collection after warmup eliminates GC pauses during traffic
-
----
-
-## API
-
-### `POST /fraud-score`
-
-Evaluates a transaction and returns an approval decision with a fraud score.
-
-**Request:**
-```json
-{
-  "id": "tx-123",
-  "transaction": { "amount": 150.0, "installments": 1, "requested_at": "2026-03-11T20:23:35Z" },
-  "customer": { "avg_amount": 200.0, "tx_count_24h": 5, "known_merchants": ["MERC-001"] },
-  "merchant": { "id": "MERC-001", "mcc": "5411", "avg_amount": 180.0 },
-  "terminal": { "is_online": true, "card_present": true, "km_from_home": 10.0 },
-  "last_transaction": { "timestamp": "2026-03-11T14:58:35Z", "km_from_current": 5.0 }
-}
-```
-
-**Response:**
-```json
-{ "approved": true, "fraud_score": 0.2 }
-```
-
-The fraud score is calculated as the proportion of fraudulent transactions among the 5 nearest neighbors. A transaction is approved when `fraud_score < 0.6`.
-
-### `GET /ready`
-
-Health check endpoint. Returns `200 OK` when the API is initialized and ready to accept requests.
-
----
-
-## Vector Dimensions (14)
-
-| Idx | Dimension | Formula |
-|-----|-----------|---------|
-| 0 | amount | `clamp(amount / max_amount)` |
-| 1 | installments | `clamp(installments / max_installments)` |
-| 2 | amount_vs_avg | `clamp((amount / avg_amount) / amount_vs_avg_ratio)` |
-| 3 | hour_of_day | `hour / 23` |
-| 4 | day_of_week | `day_of_week / 6` (Mon=0, Sun=6) |
-| 5 | minutes_since_last_tx | `clamp(minutes / max_minutes)` or `-1` if null |
-| 6 | km_from_last_tx | `clamp(km / max_km)` or `-1` if null |
-| 7 | km_from_home | `clamp(km / max_km)` |
-| 8 | tx_count_24h | `clamp(count / max_tx_count_24h)` |
-| 9 | is_online | `1` if online, `0` otherwise |
-| 10 | card_present | `1` if card present, `0` otherwise |
-| 11 | unknown_merchant | `1` if unknown, `0` if known |
-| 12 | mcc_risk | `mcc_risk.json[mcc]` (default `0.5`) |
-| 13 | merchant_avg_amount | `clamp(avg / max_merchant_avg_amount)` |
-
-The `clamp` function restricts values to `[0.0, 1.0]`. Dimensions 5 and 6 use `-1` when `last_transaction` is null.
 
 ---
 
@@ -205,9 +150,6 @@ The `clamp` function restricts values to `[0.0, 1.0]`. Dimensions 5 and 6 use `-
 
 # Preprocess dataset (run once before Docker build)
 dotnet run --project Tools/DataPProcessor -c Release
-
-# Build Docker image
-docker build -t ruanpablocr/rinha-backend2026:latest .
 
 # Run stack
 docker compose up
@@ -239,7 +181,3 @@ The stack exposes port `9999` via Nginx, round-robining between 2 API instances.
 ```
 
 ---
-
-## License
-
-MIT
