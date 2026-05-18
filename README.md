@@ -129,40 +129,9 @@ Runs during Docker build. Steps:
 
 - **Memory-Mapped Files:** Vectors and labels are accessed via MMF for zero-copy reads
 - **Warmup:** On startup, every cache line (64B stride) of the vector and label regions is touched, and synthetic queries are run for every bucket to pre-fault bucket metadata and warm the branch predictor
-- **GC Control:** Aggressive collection after warmup eliminates GC pauses during traffic
 
 ---
 
-## API
-
-### `POST /fraud-score`
-
-Evaluates a transaction and returns an approval decision with a fraud score.
-
-**Request:**
-```json
-{
-  "id": "tx-123",
-  "transaction": { "amount": 150.0, "installments": 1, "requested_at": "2026-03-11T20:23:35Z" },
-  "customer": { "avg_amount": 200.0, "tx_count_24h": 5, "known_merchants": ["MERC-001"] },
-  "merchant": { "id": "MERC-001", "mcc": "5411", "avg_amount": 180.0 },
-  "terminal": { "is_online": true, "card_present": true, "km_from_home": 10.0 },
-  "last_transaction": { "timestamp": "2026-03-11T14:58:35Z", "km_from_current": 5.0 }
-}
-```
-
-**Response:**
-```json
-{ "approved": true, "fraud_score": 0.2 }
-```
-
-The fraud score is calculated as the proportion of fraudulent transactions among the 5 nearest neighbors. A transaction is approved when `fraud_score < 0.6`.
-
-### `GET /ready`
-
-Health check endpoint. Returns `200 OK` when the API is initialized and ready to accept requests.
-
----
 
 ## Vector Dimensions (14)
 
@@ -194,8 +163,6 @@ The `clamp` function restricts values to `[0.0, 1.0]`. Dimensions 5 and 6 use `-
 - **Distance computation:** Scalar early-abort, ~2.4/14 dimensions evaluated on average
 - **Scan strategy:** Positional estimation within sorted buckets → radial expansion → risk bin fallback
 - **Memory footprint:** ~90 MB for binary files (vectors + labels + buckets)
-- **Warmup cost:** Paid once at startup, ~200ms on target hardware
-
 ---
 
 ## Build & Run
@@ -237,9 +204,3 @@ The stack exposes port `9999` via Nginx, round-robining between 2 API instances.
 ├── Dockerfile                # Multi-stage AOT build
 └── nginx.conf                # Reverse proxy config
 ```
-
----
-
-## License
-
-MIT
