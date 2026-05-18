@@ -207,7 +207,7 @@ The `clamp` function restricts values to `[0.0, 1.0]`. Dimensions 5 and 6 use `-
 dotnet run --project Tools/DataPProcessor -c Release
 
 # Build Docker image
-docker build -t ruanpablocr/rinha-backend2026:latest .
+docker build -t ruanpcr/rinha-backend2026:latest .
 
 # Run stack
 docker compose up
