@@ -151,6 +151,8 @@ Runs during Docker build. Steps:
 # Preprocess dataset (run once before Docker build)
 dotnet run --project Tools/DataPProcessor -c Release
 
+# Build Docker image
+docker build -t ruanpcr/rinha-backend2026:latest .
 # Run stack
 docker compose up
 ```
