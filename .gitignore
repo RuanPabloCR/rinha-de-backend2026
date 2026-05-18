@@ -1,13 +1,10 @@
-rinhaResources/
 data/
-
+rinhaResources/
 *.log
 *.tmp
+*.lscache
 obj/
 bin/
-ExploratoryAnalysis/
-SearchMicrotests/
 .env
 .aider*
-Tools/ChartServer/
 Misc/
