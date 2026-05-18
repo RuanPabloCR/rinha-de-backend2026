@@ -14,19 +14,24 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 # Instalar dependências clang/zlib1g-dev para publicação no nativo
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-    clang zlib1g-dev \
+    clang zlib1g-dev curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 COPY ["SuperDotnet/SuperDotnet.csproj", "SuperDotnet/"]
+COPY ["Tools/DataPProcessor/DataPProcessor.csproj", "Tools/DataPProcessor/"]
 RUN dotnet restore "SuperDotnet/SuperDotnet.csproj"
-COPY . .
+COPY SuperDotnet/ SuperDotnet/
+COPY Tools/DataPProcessor/ Tools/DataPProcessor/
 WORKDIR "/src"
 RUN mkdir -p /src/data \
-    && cp /src/rinhaResources/rinha-de-backend-2026/resources/references.json.gz /src/data/references.json.gz \
-    && cp /src/rinhaResources/rinha-de-backend-2026/resources/mcc_risk.json /src/data/mcc_risk.json \
-    && cp /src/rinhaResources/rinha-de-backend-2026/resources/normalization.json /src/data/normalization.json
+    && curl -sL -o /src/data/references.json.gz \
+        "https://github.com/zanfranceschi/rinha-de-backend-2026/raw/main/resources/references.json.gz" \
+    && curl -sL -o /src/data/mcc_risk.json \
+        "https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/mcc_risk.json" \
+    && curl -sL -o /src/data/normalization.json \
+        "https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/normalization.json"
 RUN dotnet run --project "Tools/DataPProcessor/DataPProcessor.csproj" -c $BUILD_CONFIGURATION
 
 # Esta fase é usada para publicar o projeto de serviço a ser copiado para a fase final
