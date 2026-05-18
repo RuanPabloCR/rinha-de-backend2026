@@ -1,0 +1,10 @@
+data/
+rinhaResources/
+.git/
+*.log
+*.tmp
+obj/
+bin/
+.env
+.aider*
+Misc/
