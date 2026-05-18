@@ -31,9 +31,6 @@ builder.Services.AddSingleton<Normalization>(JsonSerializer.Deserialize(normaliz
 builder.Services.AddSingleton<TransactionVectorizer>();
 builder.Services.AddSingleton<SearchService>();
 
-var metrics = new RequestMetrics();
-builder.Services.AddSingleton(metrics);
-
 var concurrencyLimiter = new SemaphoreSlim(2, 2);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -75,29 +72,6 @@ GC.Collect(2, GCCollectionMode.Aggressive);
 warmupSw.Stop();
 Console.WriteLine($"Pipeline warmup completed in {warmupSw.ElapsedMilliseconds}ms");
 
-// Middleware: captures t0 (request arrived) and t4 (response flushed)
-app.Use(async (context, next) =>
-{
-    long t0 = Stopwatch.GetTimestamp();
-    await next(context);
-    long t4 = Stopwatch.GetTimestamp();
-
-    if (context.Items.TryGetValue("t1", out var t1Obj) &&
-        context.Items.TryGetValue("t2", out var t2Obj) &&
-        context.Items.TryGetValue("t3", out var t3Obj) &&
-        t1Obj is long t1 && t2Obj is long t2 && t3Obj is long t3)
-    {
-
-        long parseUs = (t1 - t0) * 1_000_000 / Stopwatch.Frequency;
-        long queueUs = (t2 - t1) * 1_000_000 / Stopwatch.Frequency;
-        long classifyUs = (t3 - t2) * 1_000_000 / Stopwatch.Frequency;
-        long writeUs = (t4 - t3) * 1_000_000 / Stopwatch.Frequency;
-        long totalUs = (t4 - t0) * 1_000_000 / Stopwatch.Frequency;
-
-        metrics.RecordTimings(parseUs, queueUs, classifyUs, writeUs, totalUs);
-    }
-});
-
 app.MapGet("/ready", () => Results.Ok("API is ready!"));
 app.MapPost("/fraud-score", async (
     FraudScoreRequest request,
@@ -105,21 +79,13 @@ app.MapPost("/fraud-score", async (
     SearchService searchService,
     HttpContext httpContext) =>
 {
-    long t1 = Stopwatch.GetTimestamp();  // body parsed + DTO ready
-
     await concurrencyLimiter.WaitAsync(httpContext.RequestAborted);
-    long t2 = Stopwatch.GetTimestamp();  // semaphore acquired
 
     try
     {
         Span<short> query = stackalloc short[DatasetReader.Dimensions];
         vectorizer.VectorizeQuantized(request, query, out int baseBucket, out int riskIndex, out float amountVsAvg);
         float fraudScore = searchService.SearchFraudScore(query, baseBucket, riskIndex, amountVsAvg);
-        long t3 = Stopwatch.GetTimestamp();  // classification done
-
-        httpContext.Items["t1"] = t1;
-        httpContext.Items["t2"] = t2;
-        httpContext.Items["t3"] = t3;
 
         return Results.Ok(new FraudScoreResponse
         {
@@ -133,8 +99,6 @@ app.MapPost("/fraud-score", async (
     }
 });
 
-app.MapGet("/metrics", (RequestMetrics m) => Results.Ok(m.GetSnapshot()));
-
 app.Run();
 
 
@@ -142,7 +106,6 @@ app.Run();
 [JsonSerializable(typeof(FraudScoreResponse))]
 [JsonSerializable(typeof(Dictionary<string, float>))]
 [JsonSerializable(typeof(Normalization))]
-[JsonSerializable(typeof(TimingsSnapshot))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
 

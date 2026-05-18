@@ -1,2 +1,0 @@
-GET http://localhost:9999/metrics
-Accept: application/json
