@@ -97,7 +97,7 @@ public sealed class TransactionVectorizer
 
     private static float Clamp01(float value)
     {
-        if (float.IsNaN(value) || value <= 0f)
+        if (float.IsNaN(value) || float.IsInfinity(value) || value <= 0f)
             return 0f;
 
         return value >= 1f ? 1f : value;

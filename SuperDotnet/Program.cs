@@ -31,7 +31,10 @@ builder.Services.AddSingleton<Normalization>(JsonSerializer.Deserialize(normaliz
 builder.Services.AddSingleton<TransactionVectorizer>();
 builder.Services.AddSingleton<SearchService>();
 
-var concurrencyLimiter = new SemaphoreSlim(4, 4);
+var metrics = new RequestMetrics();
+builder.Services.AddSingleton(metrics);
+
+var concurrencyLimiter = new SemaphoreSlim(2, 2);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -50,71 +53,74 @@ var vectorizer = app.Services.GetRequiredService<TransactionVectorizer>();
 var searchService = app.Services.GetRequiredService<SearchService>();
 var warmupSw = Stopwatch.StartNew();
 
-FraudScoreRequest[] warmupQueries =
-[
-    new()
-    {
-        Transaction = new() { Amount = 50, Installments = 1, RequestedAt = DateTimeOffset.UtcNow },
-        Customer = new() { AvgAmount = 100, TxCount24h = 3, KnownMerchants = ["merchant_a"] },
-        Merchant = new() { Id = "merchant_a", Mcc = "5411", AvgAmount = 60 },
-        Terminal = new() { IsOnline = true, CardPresent = true, KmFromHome = 5 },
-        LastTransaction = null
-    },
-    new()
-    {
-        Transaction = new() { Amount = 500, Installments = 6, RequestedAt = DateTimeOffset.UtcNow },
-        Customer = new() { AvgAmount = 200, TxCount24h = 15, KnownMerchants = [] },
-        Merchant = new() { Id = "merchant_x", Mcc = "7995", AvgAmount = 300 },
-        Terminal = new() { IsOnline = false, CardPresent = true, KmFromHome = 50 },
-        LastTransaction = new()
-        {
-            Timestamp = DateTimeOffset.UtcNow.AddHours(-2),
-            KmFromCurrent = 20
-        }
-    },
-    new()
-    {
-        Transaction = new() { Amount = 200, Installments = 3, RequestedAt = DateTimeOffset.UtcNow },
-        Customer = new() { AvgAmount = 150, TxCount24h = 8, KnownMerchants = ["merchant_b", "merchant_c"] },
-        Merchant = new() { Id = "merchant_b", Mcc = "4511", AvgAmount = 180 },
-        Terminal = new() { IsOnline = true, CardPresent = false, KmFromHome = 2 },
-        LastTransaction = new()
-        {
-            Timestamp = DateTimeOffset.UtcNow.AddMinutes(-30),
-            KmFromCurrent = 1
-        }
-    }
-];
-
 Span<short> warmupQuery = stackalloc short[DatasetReader.Dimensions];
-foreach (var req in warmupQueries)
-{
-    vectorizer.VectorizeQuantized(req, warmupQuery, out int baseBucket, out int riskIndex, out float amountVsAvg);
-    searchService.SearchFraudScore(warmupQuery, baseBucket, riskIndex, amountVsAvg);
-}
 
+// Synthetic query for each (baseBucket, riskIndex) — warms branch predictor, TLB, and data cache
 for (int bb = 0; bb < BucketTable.BaseBucketCount; bb++)
     for (int ri = 0; ri < BucketTable.RiskCount; ri++)
     {
+        warmupQuery.Clear();
+        searchService.SearchFraudScore(warmupQuery, bb, ri, 0.5f);
+
+        // Also pre-fault bucket metadata
         _ = dataset.GetBucketOffset(bb, ri);
         _ = dataset.GetBucketCount(bb, ri);
     }
 
+// Stable heap before traffic — eliminates GC pauses during parse phase
+GC.Collect(2, GCCollectionMode.Aggressive);
+GC.WaitForPendingFinalizers();
+GC.Collect(2, GCCollectionMode.Aggressive);
+
 warmupSw.Stop();
 Console.WriteLine($"Pipeline warmup completed in {warmupSw.ElapsedMilliseconds}ms");
 
+// Middleware: captures t0 (request arrived) and t4 (response flushed)
+app.Use(async (context, next) =>
+{
+    long t0 = Stopwatch.GetTimestamp();
+    await next(context);
+    long t4 = Stopwatch.GetTimestamp();
+
+    if (context.Items.TryGetValue("t1", out var t1Obj) &&
+        context.Items.TryGetValue("t2", out var t2Obj) &&
+        context.Items.TryGetValue("t3", out var t3Obj) &&
+        t1Obj is long t1 && t2Obj is long t2 && t3Obj is long t3)
+    {
+
+        long parseUs = (t1 - t0) * 1_000_000 / Stopwatch.Frequency;
+        long queueUs = (t2 - t1) * 1_000_000 / Stopwatch.Frequency;
+        long classifyUs = (t3 - t2) * 1_000_000 / Stopwatch.Frequency;
+        long writeUs = (t4 - t3) * 1_000_000 / Stopwatch.Frequency;
+        long totalUs = (t4 - t0) * 1_000_000 / Stopwatch.Frequency;
+
+        metrics.RecordTimings(parseUs, queueUs, classifyUs, writeUs, totalUs);
+    }
+});
+
 app.MapGet("/ready", () => Results.Ok("API is ready!"));
-app.MapPost("/fraud-score", (
+app.MapPost("/fraud-score", async (
     FraudScoreRequest request,
     TransactionVectorizer vectorizer,
-    SearchService searchService) =>
+    SearchService searchService,
+    HttpContext httpContext) =>
 {
-    concurrencyLimiter.Wait();
+    long t1 = Stopwatch.GetTimestamp();  // body parsed + DTO ready
+
+    await concurrencyLimiter.WaitAsync(httpContext.RequestAborted);
+    long t2 = Stopwatch.GetTimestamp();  // semaphore acquired
+
     try
     {
         Span<short> query = stackalloc short[DatasetReader.Dimensions];
         vectorizer.VectorizeQuantized(request, query, out int baseBucket, out int riskIndex, out float amountVsAvg);
         float fraudScore = searchService.SearchFraudScore(query, baseBucket, riskIndex, amountVsAvg);
+        long t3 = Stopwatch.GetTimestamp();  // classification done
+
+        httpContext.Items["t1"] = t1;
+        httpContext.Items["t2"] = t2;
+        httpContext.Items["t3"] = t3;
+
         return Results.Ok(new FraudScoreResponse
         {
             Approved = fraudScore < 0.6f,
@@ -126,6 +132,9 @@ app.MapPost("/fraud-score", (
         concurrencyLimiter.Release();
     }
 });
+
+app.MapGet("/metrics", (RequestMetrics m) => Results.Ok(m.GetSnapshot()));
+
 app.Run();
 
 
@@ -133,6 +142,7 @@ app.Run();
 [JsonSerializable(typeof(FraudScoreResponse))]
 [JsonSerializable(typeof(Dictionary<string, float>))]
 [JsonSerializable(typeof(Normalization))]
+[JsonSerializable(typeof(TimingsSnapshot))]
 internal partial class AppJsonSerializerContext : JsonSerializerContext
 {
 

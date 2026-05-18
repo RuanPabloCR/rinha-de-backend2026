@@ -29,6 +29,7 @@ public unsafe sealed class SearchService
         int candidates = 0;
 
         var (offset, count) = _datasetReader.GetBucketRange(baseBucket, riskIndex);
+        int chunkIndex = 0, totalChunks = 0, radius = 0;
 
         if (count <= BucketTable.ChunkSize)
         {
@@ -38,10 +39,10 @@ public unsafe sealed class SearchService
         else
         {
             int chunkBase = _datasetReader.EstimateChunkStart(baseBucket, riskIndex, amountVsAvg);
-            int chunkIndex = (chunkBase - offset) / BucketTable.ChunkSize;
-            int totalChunks = (count + BucketTable.ChunkSize - 1) / BucketTable.ChunkSize;
+            chunkIndex = (chunkBase - offset) / BucketTable.ChunkSize;
+            totalChunks = (count + BucketTable.ChunkSize - 1) / BucketTable.ChunkSize;
 
-            for (int radius = 0; ; radius++)
+            for (radius = 0; ; radius++)
             {
                 int lo = chunkIndex - radius;
                 int hi = chunkIndex + radius;
@@ -75,7 +76,8 @@ public unsafe sealed class SearchService
         if (candidates < BucketTable.TargetMinCandidates)
         {
             int[] riskOrder = BucketTable.RiskExpansionOrders[riskIndex];
-            for (int ri = 0; ri < riskOrder.Length && candidates < BucketTable.TargetMinCandidates; ri++)
+            int remaining = BucketTable.TargetMaxCandidates - candidates;
+            for (int ri = 0; ri < riskOrder.Length && remaining > 0; ri++)
             {
                 int adjRisk = riskOrder[ri];
                 if (adjRisk == riskIndex) continue;
@@ -83,8 +85,10 @@ public unsafe sealed class SearchService
                 var (adjOffset, adjCount) = _datasetReader.GetBucketRange(baseBucket, adjRisk);
                 if (adjCount == 0) continue;
 
-                ScanRange(vectors, query, topIndexes, topDistances, adjOffset, adjOffset + adjCount);
-                candidates += adjCount;
+                int take = Math.Min(adjCount, remaining);
+                ScanRange(vectors, query, topIndexes, topDistances, adjOffset, adjOffset + take);
+                candidates += take;
+                remaining -= take;
             }
         }
 

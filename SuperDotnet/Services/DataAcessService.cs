@@ -69,16 +69,27 @@ public unsafe sealed class DatasetReader : IDisposable
 
     public void Warmup()
     {
-        int pageSize = Environment.SystemPageSize;
         long totalVectorBytes = (long)TotalVectors * VectorSizeBytes;
 
         byte sink = 0;
 
-        for (long offset = 0; offset < totalVectorBytes; offset += pageSize)
+        // Touch every cache line (64B stride) of vectors
+        for (long offset = 0; offset < totalVectorBytes; offset += 64)
             sink ^= *(_vectorPtr + offset);
 
-        for (long offset = 0; offset < TotalVectors; offset += pageSize)
+        // Touch every cache line of labels
+        for (long offset = 0; offset < TotalVectors; offset += 64)
             sink ^= *(_labelPtr + offset);
+
+        // Pre-touch first ChunkSize of every non-empty bucket (hot path)
+        for (int b = 0; b < BucketTable.BaseBucketCount; b++)
+            for (int r = 0; r < BucketTable.RiskCount; r++)
+            {
+                var (off, cnt) = GetBucketRange(b, r);
+                int warmCnt = Math.Min(cnt, BucketTable.ChunkSize);
+                for (int i = 0; i < warmCnt; i += 16)  // every 16th vector = 448B stride
+                    sink ^= *(_vectorPtr + (long)(off + i) * VectorSizeBytes);
+            }
 
         _warmupSink = sink;
         GC.KeepAlive(_warmupSink);

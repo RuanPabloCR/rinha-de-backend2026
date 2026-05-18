@@ -7,7 +7,10 @@ public static class BucketTable
     public const int TotalBuckets = BaseBucketCount * RiskCount;
     public const int RecordSizeBytes = sizeof(int) * 4;
     public const int ChunkSize = 16384;
-    public const int TargetMinCandidates = 150_000;
+    public const int TargetMinCandidates = 15_000;
+    public const int TargetMaxCandidates = 30_000;
+
+    public static float[] Risks => RiskValues;
 
     private static readonly float[] RiskValues =
     [

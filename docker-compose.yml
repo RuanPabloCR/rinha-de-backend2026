@@ -13,8 +13,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.2"
-          memory: 30M
+          cpus: "0.3"
+          memory: 36M
     restart: unless-stopped
     networks:
       - backend
@@ -28,8 +28,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.4" 
-          memory: 160M
+          cpus: "0.35" 
+          memory: 157M
     restart: unless-stopped
     networks:
       - backend

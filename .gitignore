@@ -9,3 +9,5 @@ ExploratoryAnalysis/
 SearchMicrotests/
 .env
 .aider*
+Tools/ChartServer/
+Misc/
