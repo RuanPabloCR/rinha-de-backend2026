@@ -20,7 +20,7 @@ services:
       - backend
 
   api1: &api-template
-    image: ruanpablocr/rinha-backend2026:latest
+    image: ruanpcr/rinha-backend2026:latest
     platform: linux/amd64
     deploy:
       resources:
